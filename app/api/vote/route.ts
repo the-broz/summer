@@ -1,11 +1,11 @@
 import { type NextRequest, NextResponse } from "next/server"
-
-// In-memory storage for votes (in production, use a database)
-const voteStorage: Record<number, { upVotes: number; downVotes: number; voters: Set<string> }> = {}
+import { addVoteLog, voteStorage } from "@/lib/storage"
+import { wsManager } from "@/lib/websocket"
 
 export async function POST(request: NextRequest) {
   try {
     const { vote, minute, userId, userName } = await request.json()
+    console.log('Received vote:', { vote, minute, userId, userName })
 
     if (!userName || !userName.trim()) {
       return NextResponse.json(
@@ -22,6 +22,7 @@ export async function POST(request: NextRequest) {
     }
 
     const minuteData = voteStorage[minute]
+    console.log('Current vote data for minute', minute, ':', { upVotes: minuteData.upVotes, downVotes: minuteData.downVotes, votersCount: minuteData.voters.size })
 
     // Check if user already voted this minute
     if (minuteData.voters.has(userId)) {
@@ -42,6 +43,26 @@ export async function POST(request: NextRequest) {
     }
 
     minuteData.voters.add(userId)
+    console.log('Updated vote data:', { upVotes: minuteData.upVotes, downVotes: minuteData.downVotes, votersCount: minuteData.voters.size })
+
+    // Create vote log entry
+    const voteLog = {
+      id: `${Date.now()}_${Math.random()}`,
+      name: userName.trim(),
+      vote,
+      timestamp: new Date().toLocaleTimeString(),
+      minute,
+      userId,
+    }
+
+    // Add to vote logs storage
+    addVoteLog(voteLog)
+
+    // Broadcast to all connected clients
+    wsManager.broadcast({
+      type: 'vote',
+      data: voteLog
+    })
 
     const stats = {
       upVotes: minuteData.upVotes,
@@ -53,6 +74,7 @@ export async function POST(request: NextRequest) {
       success: true,
       stats,
       userName: userName.trim(),
+      voteLog,
     })
   } catch (error) {
     console.error("Vote error:", error)
